@@ -1,0 +1,199 @@
+\documentclass[11pt]{article}
+\usepackage{upquote}
+\usepackage{minted}
+\fvset{frame=single}
+
+\usepackage[colorlinks=true]{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{ifthen}
+\usepackage{fancyvrb}
+
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{mathtools}
+
+\usepackage{multirow}
+\usepackage{enumitem}
+
+\usepackage{comment}
+\usepackage[usenames,dvipsnames,svgnames,table,hyperref]{xcolor}
+\usepackage{titlesec}
+\usepackage{minted}
+
+
+\title{Identification of Frost in Martian HiRISE images using a CNN}
+\author{SAMUEL STRONG}
+\date{June 2023}
+
+\begin{document}
+
+\maketitle
+
+\section{Abstract}
+The ML-ready dataset of martian surface images used in this project was taken from JPL's dataverse. It contains 29,686 labeled image tiles (png and associated json) taken by the HiRISE camera. Each png file is 299x299 pixels in grayscale. The purpose of this project was not only to determine if frost is present in an image, but also which indicators of frost are present. 
+\\
+I used the suggested training, validation, and test split information in the source images txt files. In this project, I applied a convolutional neural network (CNN) to train the model. Using hamming loss and a custom metric: frost\_presence\_accuracy, I was able to evaluate my model's performance. These metrics will be discussed later in this report.
+
+
+\section{Methods}
+Each tile is mapped to a 6-element array, where each value is either a 0 or 1, corresponding to the presence of the following frost contexts in-order:
+$$[\text{defrosting marks, halos, polygonal cracks, slab ice cracks, uniform albedo, other}]$$
+Thus, the entry [0,1,0,0,1,0] corresponds to an image with halos and uniform albedo.\\
+In order to determine the "true" label of each image, I created a label aggregation method I call the \textbf{confidence-overlap weighted aggregated label}. The process is as follows:\\
+In the JSON file of an image containing frost, the labelers provided many useful metrics. Most importantly, they provided a frost\_context list, which are characteristics of the image that led them to classify it as 'frost.' 
+\begin{itemize}
+    \item Defrosting Marks
+    \item Halos
+    \item Polygonal Cracks
+    \item Slab ice cracks
+    \item Uniform Albedo
+    \item Other
+\end{itemize}
+They also provided a confidence value (low, medium, high) in their labelling as well as the proportion of overlap. The way I determined the "true" context of the images was to created a weighted average of the labelers' decisions multiplied by overlap proportion, and finally a hard 0.5 cutoff. Firstly, I assigned the following weights to each confidence value:
+\begin{itemize}
+    \item \textbf{low}: 0.4
+    \item \textbf{medium}: 0.7
+    \item \textbf{high}: 1.0
+\end{itemize}
+Then, iterate through all of the annotations. For each annotation, a labelers' predictions (weighted with their confidence, multiplied by overlap) was added to the final 6-element array. Then the array is averaged, and is rounded to the nearest integer. To better demonstrate this technique, I will provide a detailed example; \\\\
+Assume we have the following annotations for some tile:
+\begin{enumerate}
+    \item \textbf{labeler\_1}
+    \begin{itemize}
+        \item \textbf{Confidence}: medium (0.7)
+        \item \textbf{Context}: [defrost marks, halos]
+        \item \textbf{Overlap}: 1.0
+    \end{itemize}
+    \item \textbf{labeler\_2}
+    \begin{itemize}
+        \item \textbf{Confidence}: high (1.0)
+        \item \textbf{Context}: [defrost marks, other]
+        \item \textbf{Overlap}: 0.95
+    \end{itemize}
+    \item \textbf{labeler\_3}
+    \begin{itemize}
+        \item \textbf{Confidence}: low (0.4)
+        \item \textbf{Context}: [halos, poly cracks, other]
+        \item \textbf{Overlap}: 0.7
+    \end{itemize}
+\end{enumerate}
+Each labeler will, thus, make the following contributions:
+\begin{enumerate}
+    \item Labeler 1 has a weight of 0.7*1.0, so they contribute $[0.7, 0.7, 0, 0, 0, 0]$
+    \item Labeler 2 has a weight of 1.0*0.95, so they contribute $[0.95, 0, 0, 0, 0, 0.95]$
+    \item Labeler 3 has a weight of 0.4*0.7, so they contribute $[0, 0.28, 0.28, 0, 0, 0.28]$
+\end{enumerate}
+We now find the "true" label by summing up all the contributions and taking an average
+\begin{itemize}
+    \item Sum each element columnwise:
+    $$[0.7+0.95, 0.7+0.28, 0.28, 0, 0, 0.95+0.28]$$
+    \item Average each element by N (number of annotations):
+    $$[1.65/3, 0.98/3, 0.28/3, 0, 0, 1.23/3]$$
+    $$=[0.55, 0.32, 0.093, 0, 0, 0.41]$$
+    \item Perform the 0.5 cutoff
+    $$=[1, 0, 0, 0, 0, 0]$$
+\end{itemize}
+\\
+To preprocess the data, I normalized the images by dividing by 255.0. This rescales the pixel values to a range between 0 and 1. I then shuffled the training input array, and performed data augmentation with the following parameters:\\
+\begin{itemize}
+    \item rotation\_range=20,
+    \item width\_shift\_range=0.2,
+    \item height\_shift\_range=0.2,
+    \item shear\_range=0.2,
+    \item zoom\_range=0.2,
+    \item horizontal\_flip=True,
+    \item vertical\_flip=True
+\end{itemize}
+
+\section{Neural Network}
+I developed a multi-label classifcation model using a convolutional neural network. It consists of 3 2D convolutional layers, making use of the ReLU (Rectified Linear Unit) activation function to introduce non-linearity. Each of these convolutional layers consists of a max-pooling layer to decrease computational complexity and a dropout layer to prevent overfitting. After these 3 convolutional layers, there is flattening to convert the matrix of features into a vector so that it can be used in fully connected Dense layers. The flattened feature maps are then passed through 3 dense layers, also with dropout regularization to make predictions on each of the six target classes.\\\\
+By using a sigmoid activation function in the last layer, the model was able to determine the presence or absence of each class independently. Optimization was handled with the adam optimizer, and loss was computed using binary\_crossentropy. Binary crossentropy loss function is well-suited for binary classification problems such as this, where it measures the dissimilarity between the predicted probabilities and true labels for each class independently. The output is the probabilities for each of 6 classes. I determined that a cutoff of 0.6 results in the highest accuracy for the model.\\\\
+I used 10 epochs, but more may be needed for improved function. The code was made with Keras with Tensorflow backend, coded in Python.\pagebreak
+\begin{lstlisting}[language=Python, caption=CNN]
+num_classes = 6
+
+model = Sequential()
+model.add(Conv2D(32, (3, 3), activation='relu',
+          input_shape=(299, 299, 1)))
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.2))
+
+model.add(Conv2D(64, (3, 3), activation='relu'))
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.2))
+
+model.add(Conv2D(64, (3, 3), activation='relu'))
+model.add(MaxPooling2D((2, 2)))
+model.add(Dropout(0.2))
+
+model.add(Flatten())
+model.add(Dense(256, activation='relu'))
+model.add(Dropout(0.3))
+model.add(Dense(32, activation='relu'))
+model.add(Dropout(0.3))
+model.add(Dense(num_classes, activation='sigmoid'))
+
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=[hamming_loss, frost_presence_accuracy])
+\end{lstlisting}
+\section{Analysis}
+To analyze the performance of the model, I implemented two custom metrics:
+\begin{itemize}
+    \item \textbf{Hamming Loss}: For our purposes, this metric is superior to accuracy because it takes into account the similarity between predicted labels and true labels; it calculates the average fraction of labels that are incorrectly predicted, taking into account both false positives and false negatives. Pure accuracy would mark a prediction as invalid even if it was very similar. For instance, if the machine predicted frost is present with markers 'uniform albedo' and 'defrosting marks,' and the true labels were identical plus 'polygonal cracks,' this would be marked as fully incorrect. With Hamming Loss, predictions like these are still rewarded.
+    \item \textbf{Frost Presence Accuracy}: Purely frost or no frost. Our model will output a 6-element array of 0's and 1's. If the array has any 1's, then the model has detected a frost context, and it therefore thinks there is frost present. This metric simply checks the binary frost/background. If the prediction contains any 1's, treat it as "frost." If all 0's, treat it as "background."
+\end{itemize}
+The model's hamming loss showed a decreasing trend after each epoch. However, running on my mac laptop's GPU, it took over an hour for 10 epochs. Perhaps with better equipment I can determine the epoch at which overfitting occurs. In the graph below, we may not have reached the overfitting point, and introducing more epochs may produce a better result:\\
+\includegraphics[width=1\textwidth]{graph.png}
+\\
+The validation hamming loss shows a decreasing trend at each epoch, and the frost presence accuracy shows an increasing trend at each epoch. This is the expected behavior, indicating that the model is learning the relevant patterns and improving its performance over time. In the end, the model achieved a validation hamming loss of 0.0824 and frost presence accuracy of $89\%$.
+\\
+Moreover, I introduced two "dumb" models. The first is predict\_zeros, where for each image it returns [0, 0, 0, 0, 0, 0], and the second is predict\_random, which returns [x, x, x, x, x, x] where for each$x, x = rand\{0,1\}$. These helped me evaluate my model, to determine if it performs better than random guessing. I ran all three models against the testing data. The hamming loss and frost presence accuracy values across these models were as follows:\\\\
+\textbf{Hamming Loss}
+\begin{itemize}
+    \item Hamming Loss for Zeros: 0.174
+    \item Hamming Loss for Random: 0.500
+    \item Hamming Loss for CNN: 0.119
+\end{itemize}
+\textbf{Frost Presence Accuracy}
+\begin{itemize}
+    \item Frost Presence Accuracy for Zeros: 0.360
+    \item Frost Presence Accuracy for Random: 0.636
+    \item Frost Presence Accuracy for CNN: 0.795
+\end{itemize}
+The hamming loss and frost presence accuracy of our model significantly outperforms both "dumb" models. For hamming loss, the zeros predictor is 46\% worse than our CNN and the random predictor is 320\% worse. \\\\
+While the zero predictor's hamming loss is somewhat closer to our CNN (still significantly worse) than the random predictor, its frost presence accuracy demonstrates how much worse it actually is. This is why both metrics are very important; against the testing data, the zeros prediction was only 45\% as accurate as our model, and the random guesser was 80\% as accurate at predicting frost presence. \\\\
+While random guesser does a closer frost presence accuracy, it fails to identify frost context, as its hamming loss is 320\% worse. \\\\
+I output 20 images from the testing dataset and ran my model to demonstrate its capabilities. If the title is in green, it represents an accurate prediction. In the white text box, it displays the characteristics it detected in the image:\\\\
+\includegraphics[width=1\textwidth]{results.png}
+\end{document}
