@@ -13,9 +13,9 @@ metric: frost_presence_accuracy, I was able to evaluate my model's
 performance. These metrics will be discussed later in this report.
 
 # Contents
-- **context_confidence_cnn.ipynb**: The Jupyter Notebook for the multilabel CNN from scratch.
-- **inception_fine_tune.ipynb**: The Jupyter Notebook for fine tuning InceptionV3 to make a purely binary predictor (frost/background)
-- **vgg16.ipynb**: The Jupyter Notebook for fine tuning VGG16 to make a multilabel classification model to predict frost contexts.
+- **multilabel_cnn.ipynb**: The Jupyter Notebook for the multilabel CNN from scratch.
+- **binary_fine_tune.ipynb**: The Jupyter Notebook for fine tuning to make a purely binary predictor (frost/background)
+- **multilabel_fine_tune.ipynb**: The Jupyter Notebook for fine tuning to make a multilabel classification model to predict frost contexts.
 - **train/val/text_source_images.txt** The suggested splits to prevent data leakage.
 - **SUDS...Labeling_Guide.pdf** A provided PDF on how the images were labelled.
 
@@ -182,27 +182,12 @@ the following parameters:\
 
 I have 3 notebooks, each with a different implementation. The first is context_confidence_cnn, where
 I developed a multi-label classifcation model using a CNN from scratch.
-It consists of 3 2D convolutional layers, making use of
-the ReLU activation function in each layer. Each of these convolutional layers consists of a
-max-pooling layer and a dropout layer. After these 3 convolutional layers, there
-is flattening to convert the matrix of features into a vector so that it
-can be used in fully connected Dense layers. The flattened feature maps
-are then passed through 3 dense layers, also with dropout regularization
-to make predictions on each of the six target classes.\
-\
-By using a sigmoid activation function in the last layer, the model was
-able to determine the presence or absence of each class independently.
-Optimization was handled with the adam optimizer, and loss was computed
-using binary_crossentropy. Binary crossentropy loss function is
-well-suited for binary classification problems such as this, where it
-measures the dissimilarity between the predicted probabilities and true
-labels for each class independently.\
 
-The inception_fine_tune.ipynb file fine tunes InceptionV3 to make a binary classification model.
+The binary_fine_tune.ipynb file fine tunes InceptionV3 (now changed to ResNet152) to make a binary classification model.
 This purely predicts if the image has frost or does not. It does not make predictions
 on the frost context classes. \
 
-The vgg16_fine_tune.ipynb file fine tunes VGG16 to make a multilabel classification model.
+The multilabel_fine_tune.ipynb file currently fine tunes VGG16 to make a multilabel classification model.
 This is an improvement from the pure CNN model earlier. It makes predictions on each
 individual frost context class. A way to improve this may be to implement a hierarchical
 clustering algorithm as stipulated in these papers:
