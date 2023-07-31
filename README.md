@@ -13,9 +13,7 @@ metric: frost_presence_accuracy, I was able to evaluate my model's
 performance. These metrics will be discussed later in this report.
 
 # Contents
-- **multilabel_cnn.ipynb**: The Jupyter Notebook for the multilabel CNN from scratch.
-- **binary_fine_tune.ipynb**: The Jupyter Notebook for fine tuning to make a purely binary predictor (frost/background)
-- **multilabel_fine_tune.ipynb**: The Jupyter Notebook for fine tuning to make a multilabel classification model to predict frost contexts.
+- **binary_fine_tune.ipynb**: The Jupyter Notebook for fine tuning InceptionV3 to make a purely binary predictor (frost/background)
 - **train/val/text_source_images.txt** The suggested splits to prevent data leakage.
 - **SUDS...Labeling_Guide.pdf** A provided PDF on how the images were labelled.
 
@@ -62,162 +60,44 @@ data
 
 # Methods
 
-I mapped each tile to a 6-element array, where each value is either a 0
-or 1, corresponding to the presence of the following frost contexts
-in-order:
-
-* [defrosting marks, halos, polygonal cracks, slab ice cracks, uniform albedo, other]
-
-Thus, the entry \[0,1,0,0,1,0\] corresponds to an image with halos and
-uniform albedo.\
-In order to determine the \"true\" label of each image, I created a
-label aggregation method I call the **confidence-overlap weighted
-aggregated label**. The process is as follows:\
-In the JSON file of an image containing frost, the labelers provided
-many useful metrics. Most importantly, they provided a frost_context
-list, which are characteristics of the image that led them to classify
-it as 'frost.'
-
--   Defrosting Marks
-
--   Halos
-
--   Polygonal Cracks
-
--   Slab ice cracks
-
--   Uniform Albedo
-
--   Other
-
-They also provided a confidence value (low, medium, high) in their
-labelling as well as the proportion of overlap. The way I determined the
-\"true\" context of the images was to created a weighted average of the
-labelers' decisions multiplied by overlap proportion, and finally a hard
-0.5 cutoff. Firstly, I assigned the following weights to each confidence
-value:
-
--   **low**: 0.4
-
--   **medium**: 0.7
-
--   **high**: 1.0
-
-Then, iterate through all of the annotations. For each annotation, a
-labelers' predictions (weighted with their confidence, multiplied by
-overlap) was added to the final 6-element array. Then the array is
-averaged, and is rounded to the nearest integer. To better demonstrate
-this technique, I will provide a detailed example;\
-\
-Assume we have the following annotations for some tile:
-
-1.  **labeler_1**
-
-    -   **Confidence**: medium (0.7)
-
-    -   **Context**: \[defrost marks, halos\]
-
-    -   **Overlap**: 1.0
-
-2.  **labeler_2**
-
-    -   **Confidence**: high (1.0)
-
-    -   **Context**: \[defrost marks, other\]
-
-    -   **Overlap**: 0.95
-
-3.  **labeler_3**
-
-    -   **Confidence**: low (0.4)
-
-    -   **Context**: \[halos, poly cracks, other\]
-
-    -   **Overlap**: 0.7
-
-Each labeler will, thus, make the following contributions:
-
-1.  Labeler 1 has a weight of 0.7\*1.0, so they contribute
-    [0.7, 0.7, 0, 0, 0, 0]
-
-2.  Labeler 2 has a weight of 1.0\*0.95, so they contribute
-    [0.95, 0, 0, 0, 0, 0.95]
-
-3.  Labeler 3 has a weight of 0.4\*0.7, so they contribute
-    [0, 0.28, 0.28, 0, 0, 0.28]
-
-We now find the \"true\" label by summing up all the contributions and
-taking an average
-
--   Sum each element columnwise:
-    [0.7+0.95, 0.7+0.28, 0.28, 0, 0, 0.95+0.28]
-
--   Average each element by N (number of annotations):
-    [1.65/3, 0.98/3, 0.28/3, 0, 0, 1.23/3]
-    =[0.55, 0.32, 0.093, 0, 0, 0.41]
-
--   Perform the 0.5 cutoff =[1, 0, 0, 0, 0, 0]
+In order to determine if an image has frost, I decided to check if it has uniform albedo
+and/or defrosting marks. These two classes are the majority classes, as others are rare
+such as polygonal cracks. Thus, it prevents the model from confusion. I check if there's an annotation
+containing either context at either medium or high confidence. Then, if a tile contains either of these
+labels, it is to be treated as "frost." Otherwise, it is "background"
 
 \
-To preprocess the data, I normalized the images by dividing by 255.0.
-This rescales the pixel values to a range between 0 and 1. I then
-shuffled the training input array, and performed data augmentation with
-the following parameters:\
+To preprocess the data, I used keras.applications.inception_v3.preprocess_input
+This rescales the pixel values and performs z-score normalization using ImageNet's
+mean and standard deviation. I also performed data augmentation with the
+following parameters:\
 
--   rotation_range=20,
+- rotation_range=25
+- width_shift_range=0.2
+- height_shift_range=0.2
+- horizontal_flip=True
+- zoom_range=0.25
 
--   width_shift_range=0.2,
-
--   height_shift_range=0.2,
-
--   shear_range=0.2,
-
--   zoom_range=0.2,
-
--   horizontal_flip=True,
-
--   vertical_flip=True
+Finally, in the trainig dataset, I implemented a **tile_limit** which limits the amount of tiles loaded per image.
+This way, there won't be images with several hundred tiles and others with only a dozen. This results
+in a more even distribution and allows the model to generalize better.
 
 # Neural Network
 
-I have 3 notebooks, each with a different implementation. The first is context_confidence_cnn, where
-I developed a multi-label classifcation model using a CNN from scratch.
+This model employs transfer learning using the InceptionV3 architecture, a Convolutional Neural Network (CNN) pre-trained on the ImageNet dataset.
 
-The binary_fine_tune.ipynb file fine tunes InceptionV3 (now changed to ResNet152) to make a binary classification model.
-This purely predicts if the image has frost or does not. It does not make predictions
-on the frost context classes. \
+The pre-trained layers of InceptionV3 are used as feature extractors and are "frozen", meaning their weights are not updated during training.
 
-The multilabel_fine_tune.ipynb file currently fine tunes VGG16 to make a multilabel classification model.
-This is an improvement from the pure CNN model earlier. It makes predictions on each
-individual frost context class. A way to improve this may be to implement a hierarchical
-clustering algorithm as stipulated in these papers:
-- https://www.cosmos.esa.int/documents/6109777/8766007/PSIDA2022_Abstracts+%281%29_Part49.pdf/6353daba-2e07-0f01-beca-a97d4d42ae5c?t=1652783921879
-- https://www.cosmos.esa.int/documents/6109777/9316710/X13+-+Lu+-+22-PSIDA-DE-MERNet_final.pdf/3319e266-8071-3fb0-19c4-a3c1cb9a9dfe?t=1657278565405
-- https://www.cs.waikato.ac.nz/~eibe/pubs/chains.pdf
+Following these pre-trained layers, Global Average Pooling is performed to summarize the high-dimensional feature maps into lower dimensional ones, maintaining the most important information.
+
+The model then includes a dense layer, a type of fully-connected layer often used in deep learning models to learn complex patterns. To avoid overfitting, we also include a dropout layer which randomly ignores a fraction of neurons during training.
+
+Finally, a sigmoid activation function in the output layer is used to output a probability indicating whether the image belongs to the positive class or not.
 
 # Analysis
 
-To analyze the performance of the multilabel models, I implemented two custom
-metrics:
-
--   **Hamming Loss**: For our purposes, this metric is superior to
-    accuracy because it takes into account the similarity between
-    predicted labels and true labels; it calculates the average fraction
-    of labels that are incorrectly predicted, taking into account both
-    false positives and false negatives. Pure accuracy would mark a
-    prediction as invalid even if it was very similar. For instance, if
-    the machine predicted frost is present with markers 'uniform albedo'
-    and 'defrosting marks,' and the true labels were identical plus
-    'polygonal cracks,' this would be marked as fully incorrect. With
-    Hamming Loss, predictions like these are still rewarded.
-
--   **Frost Presence Accuracy**: Purely frost or no frost. Our model
-    will output a 6-element array of 0's and 1's. If the array has any
-    1's, then the model has detected a frost context, and it therefore
-    thinks there is frost present. This metric simply checks the binary
-    frost/background. If the prediction contains any 1's, treat it as
-    \"frost.\" If all 0's, treat it as \"background.\"
-
 The fine tuned InceptionV3 model merely uses the accuracy metric as it's
 outputting values for one class (frost). Thus it is appropriate to use
-this metric.
+this metric. So far we are able to achieve ~85% validation accuracy.
+There is still a ~10% accuracy gap between validation and test, so further
+improvements are needed.
