@@ -4,4 +4,7 @@
 /*.csv
 /*.png
 /*.zip
+/*.tgz
 /HIRISE_SS.pdf
+/hirise_mars_frost
+/old_fine_tune.ipynb
